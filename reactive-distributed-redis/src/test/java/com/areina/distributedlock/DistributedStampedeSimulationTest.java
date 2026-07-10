@@ -2,6 +2,7 @@ package com.areina.distributedlock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.areina.distributedlock.config.CacheProperties;
 import com.areina.distributedlock.config.TicketJsonCodec;
 import com.areina.distributedlock.model.TicketAvailability;
 import com.areina.distributedlock.repository.TicketRepository;
@@ -64,6 +65,11 @@ class DistributedStampedeSimulationTest {
     private static final String EVENT_ID = "black-friday-2026";
     private static final String VALUE_KEY = "tickets:availability:" + EVENT_ID;
 
+    // Test tuning: a generous lock wait so the 50-request burst always acquires, plus short TTLs. The
+    // value TTL is irrelevant here because resetState() deletes the key before each scenario.
+    private static final CacheProperties CACHE_PROPERTIES = new CacheProperties(
+            Duration.ofSeconds(2), Duration.ofSeconds(30), Duration.ofSeconds(10), Duration.ofSeconds(5));
+
     @Container
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine")
             .withDatabaseName("ticketing_db")
@@ -110,7 +116,7 @@ class DistributedStampedeSimulationTest {
     @DisplayName("No distributed lock: every pod misses Redis and stampedes the database")
     void noLockStampedesAcrossPods() {
         List<TicketNoLockCacheService> pods =
-                pods(i -> new TicketNoLockCacheService(repository, redisson, ticketCodec, "pod-%02d".formatted(i)));
+                pods(i -> new TicketNoLockCacheService(repository, redisson, ticketCodec, CACHE_PROPERTIES, "pod-%02d".formatted(i)));
 
         long elapsedMs = fireOneRequestPerPod(pods, TicketNoLockCacheService::getAvailability);
         int dbQueries = repository.getQueryCount();
@@ -127,7 +133,7 @@ class DistributedStampedeSimulationTest {
     @DisplayName("Distributed lock: the whole pod cluster collapses into a single database query")
     void distributedLockCollapsesToSingleQuery() {
         List<TicketLockCacheService> pods =
-                pods(i -> new TicketLockCacheService(repository, redisson, ticketCodec, "pod-%02d".formatted(i)));
+                pods(i -> new TicketLockCacheService(repository, redisson, ticketCodec, CACHE_PROPERTIES, "pod-%02d".formatted(i)));
 
         long elapsedMs = fireOneRequestPerPod(pods, TicketLockCacheService::getAvailability);
         int dbQueries = repository.getQueryCount();
@@ -145,7 +151,7 @@ class DistributedStampedeSimulationTest {
     void localPromiseCacheCollapsesIntraPodLockContention() {
         // --- Distributed lock only: every same-pod request mints its own owner and contends for the lock. ---
         TicketLockCacheService lockOnly =
-                new TicketLockCacheService(repository, redisson, ticketCodec, "pod-single");
+                new TicketLockCacheService(repository, redisson, ticketCodec, CACHE_PROPERTIES, "pod-single");
         long lockOnlyMs = fireConcurrentRequests(() -> lockOnly.getAvailability(EVENT_ID));
         int lockOnlyDbQueries = repository.getQueryCount();
         int lockOnlyAttempts = lockOnly.getLockAttemptCount();
@@ -155,8 +161,8 @@ class DistributedStampedeSimulationTest {
 
         // --- Local promise cache in front of the same distributed lock. ---
         TicketLockCacheService delegate =
-                new TicketLockCacheService(repository, redisson, ticketCodec, "pod-single");
-        TicketLayeredCacheService layered = new TicketLayeredCacheService(delegate);
+                new TicketLockCacheService(repository, redisson, ticketCodec, CACHE_PROPERTIES, "pod-single");
+        TicketLayeredCacheService layered = new TicketLayeredCacheService(delegate, CACHE_PROPERTIES);
         long layeredMs = fireConcurrentRequests(() -> layered.getAvailability(EVENT_ID));
         int layeredDbQueries = repository.getQueryCount();
         int layeredAttempts = delegate.getLockAttemptCount();

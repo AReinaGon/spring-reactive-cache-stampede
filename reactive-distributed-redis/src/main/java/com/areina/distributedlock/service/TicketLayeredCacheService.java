@@ -1,9 +1,9 @@
 package com.areina.distributedlock.service;
 
+import com.areina.distributedlock.config.CacheProperties;
 import com.areina.distributedlock.model.TicketAvailability;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -53,16 +53,15 @@ public class TicketLayeredCacheService {
 
     private static final Logger log = LoggerFactory.getLogger(TicketLayeredCacheService.class);
 
-    /** Safety net only: entries are normally evicted the instant the in-flight {@code Mono} terminates. */
-    private static final Duration IN_FLIGHT_SAFETY_TTL = Duration.ofSeconds(5);
-
     private final TicketLockCacheService distributedLock;
     private final Cache<String, Mono<TicketAvailability>> inFlight;
 
-    public TicketLayeredCacheService(TicketLockCacheService distributedLock) {
+    public TicketLayeredCacheService(TicketLockCacheService distributedLock, CacheProperties cacheProperties) {
         this.distributedLock = distributedLock;
+        // Safety net only (cache.local-in-flight-ttl): entries are normally evicted the instant the
+        // in-flight Mono terminates (see doFinally below).
         this.inFlight = Caffeine.newBuilder()
-                .expireAfterWrite(IN_FLIGHT_SAFETY_TTL)
+                .expireAfterWrite(cacheProperties.localInFlightTtl())
                 .build();
     }
 

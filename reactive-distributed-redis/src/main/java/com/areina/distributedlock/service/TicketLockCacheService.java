@@ -1,9 +1,9 @@
 package com.areina.distributedlock.service;
 
+import com.areina.distributedlock.config.CacheProperties;
 import com.areina.distributedlock.config.TicketJsonCodec;
 import com.areina.distributedlock.model.TicketAvailability;
 import com.areina.distributedlock.repository.TicketRepository;
-import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -62,9 +62,6 @@ public class TicketLockCacheService {
 
     private static final String KEY_PREFIX = "tickets:availability:";
     private static final String LOCK_PREFIX = "lock:event:";
-    private static final Duration VALUE_TTL = Duration.ofMinutes(10);
-    private static final Duration LOCK_WAIT = Duration.ofSeconds(30);
-    private static final Duration LOCK_LEASE = Duration.ofSeconds(10);
 
     /** Mints a distinct, stable lock-owner id per request (see class Javadoc). */
     private static final AtomicLong LOCK_OWNER_ID = new AtomicLong();
@@ -80,16 +77,19 @@ public class TicketLockCacheService {
     private final TicketRepository repository;
     private final RedissonReactiveClient redisson;
     private final TicketJsonCodec codec;
+    private final CacheProperties cacheProperties;
     private final String podId;
 
     public TicketLockCacheService(
             TicketRepository repository,
             RedissonReactiveClient redisson,
             TicketJsonCodec codec,
+            CacheProperties cacheProperties,
             @Value("${POD_NAME:#{T(java.util.UUID).randomUUID().toString().substring(0,8)}}") String podId) {
         this.repository = repository;
         this.redisson = redisson;
         this.codec = codec;
+        this.cacheProperties = cacheProperties;
         this.podId = podId;
     }
 
@@ -117,18 +117,19 @@ public class TicketLockCacheService {
     }
 
     private Mono<RLockReactive> acquire(RLockReactive lock, String eventId, long ownerId) {
-        return lock.tryLock(LOCK_WAIT.toMillis(), LOCK_LEASE.toMillis(), TimeUnit.MILLISECONDS, ownerId)
+        return lock.tryLock(cacheProperties.lockWait().toMillis(), cacheProperties.lockLease().toMillis(),
+                        TimeUnit.MILLISECONDS, ownerId)
                 .flatMap(acquired -> Boolean.TRUE.equals(acquired)
                         ? Mono.just(lock)
-                        : Mono.error(new IllegalStateException(
-                                "[%s] could not acquire lock for %s within %s".formatted(podId, eventId, LOCK_WAIT))));
+                        : Mono.error(new IllegalStateException("[%s] could not acquire lock for %s within %s"
+                                .formatted(podId, eventId, cacheProperties.lockWait()))));
     }
 
     private Mono<TicketAvailability> fetchAndCache(String eventId, RBucketReactive<String> bucket) {
         log.debug("[{}] lock acquired -> querying DB eventId={}", podId, eventId);
         return repository.findAvailabilityByEventId(eventId)
                 .map(value -> value.handledBy(podId))
-                .flatMap(value -> bucket.set(codec.encode(value), VALUE_TTL).thenReturn(value));
+                .flatMap(value -> bucket.set(codec.encode(value), cacheProperties.valueTtl()).thenReturn(value));
     }
 
     /** Teaching instrument: number of requests that entered the distributed-lock acquisition path. */

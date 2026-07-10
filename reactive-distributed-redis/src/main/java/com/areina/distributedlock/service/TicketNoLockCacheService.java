@@ -1,9 +1,9 @@
 package com.areina.distributedlock.service;
 
+import com.areina.distributedlock.config.CacheProperties;
 import com.areina.distributedlock.config.TicketJsonCodec;
 import com.areina.distributedlock.model.TicketAvailability;
 import com.areina.distributedlock.repository.TicketRepository;
-import java.time.Duration;
 import org.redisson.api.RBucketReactive;
 import org.redisson.api.RedissonReactiveClient;
 import org.redisson.client.codec.StringCodec;
@@ -27,21 +27,23 @@ public class TicketNoLockCacheService {
 
     private static final Logger log = LoggerFactory.getLogger(TicketNoLockCacheService.class);
     private static final String KEY_PREFIX = "tickets:availability:";
-    private static final Duration VALUE_TTL = Duration.ofMinutes(10);
 
     private final TicketRepository repository;
     private final RedissonReactiveClient redisson;
     private final TicketJsonCodec codec;
+    private final CacheProperties cacheProperties;
     private final String podId;
 
     public TicketNoLockCacheService(
             TicketRepository repository,
             RedissonReactiveClient redisson,
             TicketJsonCodec codec,
+            CacheProperties cacheProperties,
             @Value("${POD_NAME:#{T(java.util.UUID).randomUUID().toString().substring(0,8)}}") String podId) {
         this.repository = repository;
         this.redisson = redisson;
         this.codec = codec;
+        this.cacheProperties = cacheProperties;
         this.podId = podId;
     }
 
@@ -57,6 +59,6 @@ public class TicketNoLockCacheService {
         log.debug("[{}] Redis MISS -> querying DB (no coordination) eventId={}", podId, eventId);
         return repository.findAvailabilityByEventId(eventId)
                 .map(value -> value.handledBy(podId))
-                .flatMap(value -> bucket.set(codec.encode(value), VALUE_TTL).thenReturn(value));
+                .flatMap(value -> bucket.set(codec.encode(value), cacheProperties.valueTtl()).thenReturn(value));
     }
 }
