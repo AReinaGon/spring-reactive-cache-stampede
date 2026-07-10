@@ -1,0 +1,46 @@
+# Fase A — single-JVM Caffeine module, fully in Docker (app + Postgres on one network).
+# Running the app in a container avoids host<->container networking issues (localhost/IPv6) and
+# port clashes. JMeter runs from the host against the published port 8080.
+#
+#   cd ../../reactive-local-caffeine && mvn -DskipTests package && cd ../deploy/docker
+#   docker compose -f docker-compose.local.yml up --build -d
+#   # JMeter -> http://localhost:8080
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: user_poc
+      POSTGRES_PASSWORD: pwd_poc
+      POSTGRES_DB: ticketing_db
+    volumes:
+      - ../../reactive-local-caffeine/src/test/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user_poc -d ticketing_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: ../../reactive-local-caffeine
+      dockerfile: Dockerfile
+    image: reactive-local-caffeine:local
+    environment:
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/ticketing_db
+      SPRING_R2DBC_USERNAME: user_poc
+      SPRING_R2DBC_PASSWORD: pwd_poc
+      # DEBUG so every real DB query logs a "DB HIT" line (that is how the stampede is counted).
+      LOGGING_LEVEL_COM_AREINA_CACHESTAMPEDE: DEBUG
+      JAVA_OPTS: ${JAVA_OPTS:--Xmx512m}
+      # Collapse-test knobs (defaults = normal Fase A behaviour). For the "DB falls over" run set:
+      #   LOADTEST_QUERY_LATENCY=0.2s  CACHE_TTL=3s  SPRING_R2DBC_POOL_MAX_SIZE=10  SPRING_R2DBC_POOL_MAX_ACQUIRE_TIME=2s
+      CACHE_TTL: ${CACHE_TTL:-10s}
+      LOADTEST_QUERY_LATENCY: ${LOADTEST_QUERY_LATENCY:-0s}
+      SPRING_R2DBC_POOL_MAX_SIZE: ${SPRING_R2DBC_POOL_MAX_SIZE:-10}
+      SPRING_R2DBC_POOL_MAX_ACQUIRE_TIME: ${SPRING_R2DBC_POOL_MAX_ACQUIRE_TIME:-0}
+    ports:
+      # Host port is overridable (HOST_PORT) so a stuck/occupied 8080 can be sidestepped.
+      - "${HOST_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy

@@ -1,0 +1,73 @@
+# Multi-pod deployment of reactive-distributed-redis for load testing the distributed cache stampede.
+#
+# It runs ONE Postgres + ONE Redis shared by N replicas of the app, all behind an nginx round-robin
+# load balancer on :8080 — the Docker analogue of the "20 pods, one cold key" integration test.
+#
+#   # 1. build the jar with your local Corretto 25 (the image copies it in):
+#   cd ../../reactive-distributed-redis && mvn -DskipTests package && cd ../deploy/docker
+#   # 2. bring up the cluster with, say, 10 app pods:
+#   docker compose up --build --scale app=10 -d
+#   # 3. point JMeter at http://localhost:8080 (see ../../jmeter)
+#   # 4. read the cluster-wide DB-hit count back:
+#   curl http://localhost:8080/api/tickets/stats
+#
+# CACHE_VALUE_TTL defaults to 2s here so the key keeps going cold and the stampede window reopens
+# without waiting out the 10-minute production default. Override any CACHE_* / SCALE at run time.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: user_poc
+      POSTGRES_PASSWORD: pwd_poc
+      POSTGRES_DB: ticketing_db
+    volumes:
+      - ../../reactive-distributed-redis/src/test/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user_poc -d ticketing_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # The pod. No container_name and no published host port, so it can scale to N replicas
+  # (docker compose up --scale app=N). Each replica gets its own random pod id (handledByPod).
+  app:
+    build:
+      context: ../../reactive-distributed-redis
+      dockerfile: Dockerfile
+    image: reactive-distributed-redis:local
+    environment:
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/ticketing_db
+      SPRING_R2DBC_USERNAME: user_poc
+      SPRING_R2DBC_PASSWORD: pwd_poc
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # Cap each pod's heap so a cluster of replicas fits comfortably in Docker Desktop's memory.
+      JAVA_OPTS: ${JAVA_OPTS:--Xmx256m -Xss512k}
+      # Short TTLs so the stampede window keeps reopening during a load test. Tune freely.
+      CACHE_VALUE_TTL: ${CACHE_VALUE_TTL:-2s}
+      CACHE_LOCK_WAIT: ${CACHE_LOCK_WAIT:-30s}
+      CACHE_LOCK_LEASE: ${CACHE_LOCK_LEASE:-10s}
+      CACHE_LOCAL_IN_FLIGHT_TTL: ${CACHE_LOCAL_IN_FLIGHT_TTL:-5s}
+    mem_limit: ${POD_MEM_LIMIT:-512m}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  lb:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - app
