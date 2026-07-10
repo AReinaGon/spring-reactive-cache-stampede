@@ -211,6 +211,62 @@ bottleneck under heavy per-pod concurrency.
 
 ---
 
+## Load testing and multi-pod deployment
+
+The integration tests prove the DB-query counts deterministically. To watch the same effect under a real
+HTTP load generator — and, for the distributed module, across *real* separate pods — the repo ships
+JMeter 5.6.3 plans and container/Kubernetes manifests.
+
+### JMeter plans (`jmeter/`)
+
+| Plan | Drives | Compares |
+|------|--------|----------|
+| `local-stampede.jmx` | one app instance | naive value cache vs promise cache |
+| `local-collapse.jmx` | one app, ramp over minutes | the DB collapsing (throughput sawtooth, 500s) under an expensive query + a small pool |
+| `distributed-stampede.jmx` | the multi-pod cluster via the load balancer | naive vs distributed lock vs layered, reading the cluster-wide DB-hit counter |
+
+```bash
+jmeter -n -t jmeter/local-stampede.jmx -Jport=8080 -Jendpoint=/naive -Jthreads=500 -Jloops=10 \
+  -l out.jtl -e -o report/
+```
+
+### Reopening the stampede window on demand
+
+Both apps externalise their cache and pool settings so a load test does not have to wait out a
+10-minute TTL. Override them per environment:
+
+| Variable | Module | Effect |
+|----------|--------|--------|
+| `CACHE_TTL` / `CACHE_VALUE_TTL` | local / distributed | how long a cached value lives (e.g. `3s`, so the key keeps going cold) |
+| `LOADTEST_QUERY_LATENCY` | local | injects `pg_sleep` so each query holds its connection (e.g. `200ms`) — simulates an expensive downstream |
+| `SPRING_R2DBC_POOL_MAX_SIZE` / `SPRING_R2DBC_POOL_MAX_ACQUIRE_TIME` | local | shrink the pool and add an acquire timeout, so a stampede drains it and starts returning 500s |
+
+The distributed module also exposes a **cluster-wide DB-hit counter** (a Redis `RAtomicLong`) so a
+multi-pod run is measurable the same way the test is: `GET /api/tickets/stats` reads it and
+`POST /api/tickets/cache/{eventId}/reset` clears it before a burst.
+
+### Docker (`deploy/docker/`)
+
+```bash
+# single containerised app + PostgreSQL (avoids host/container networking issues)
+docker compose -f deploy/docker/docker-compose.local.yml up --build -d
+
+# N-pod cluster behind an nginx round-robin load balancer, sharing one Redis
+docker compose -f deploy/docker/docker-compose.yml up --build --scale app=5 -d
+#   -> point JMeter at http://localhost:8080 ; the balancer fans each burst out across the pods
+```
+
+Each pod caps its heap (`-Xmx256m`) so a small cluster fits in a memory-limited Docker Desktop, and both
+modules carry a `Dockerfile` that runs the prebuilt jar. Repeat `--scale app=N` on every `up`, and
+recreate the `lb` after re-scaling (nginx resolves the replica IPs at startup).
+
+### Kubernetes (`deploy/k8s/`)
+
+Namespace + PostgreSQL + Redis + a `Deployment` of the distributed app (scale via `replicas`) fronted by
+a `Service`. The container image is the same one Docker uses.
+
+---
+
 ## Stack
 
 | Technology         | Version          | Used by                          |
@@ -245,33 +301,42 @@ so the only prerequisite for `mvn test` is a running Docker daemon.
 spring-reactive-cache-stampede-poc/
 ├── README.md
 ├── docker-compose.yml                                  # PostgreSQL + Redis for running the apps by hand
+├── jmeter/                                             # JMeter 5.6.3 load-test plans
+│   ├── local-stampede.jmx                              #   single JVM: naive vs promise
+│   ├── local-collapse.jmx                              #   single JVM: ramp to DB collapse
+│   └── distributed-stampede.jmx                        #   multi-pod: naive vs lock vs layered
+├── deploy/
+│   ├── docker/                                         # single app + N-pod cluster (nginx LB) compose files
+│   └── k8s/                                            # namespace + Postgres + Redis + app Deployment/Service
 ├── reactive-local-caffeine/                            # single-JVM stampede (Caffeine promise cache)
 │   ├── pom.xml
+│   ├── Dockerfile
 │   └── src/
 │       ├── main/java/com/areina/cachestampede/
 │       │   ├── CacheStampedeApplication.java
 │       │   ├── controller/TicketController.java
 │       │   ├── service/TicketValueCacheService.java    # naive value cache (stampedes)
 │       │   ├── service/TicketPromiseCacheService.java   # reactive promise cache (mitigates)
-│       │   ├── repository/TicketRepository.java         # reactive R2DBC repository (DatabaseClient)
+│       │   ├── repository/TicketRepository.java         # reactive R2DBC repo (+ pg_sleep load-test knob)
 │       │   ├── model/TicketAvailability.java
-│       │   └── config/CacheConfig.java
+│       │   └── config/CacheConfig.java                  # externalised TTL (cache.ttl)
 │       └── test/
 │           ├── java/com/areina/cachestampede/
 │           │   └── StampedeSimulationTest.java          # Testcontainers PostgreSQL integration test
 │           └── resources/db/schema.sql                  # table + seed (Testcontainers & docker-compose)
 └── reactive-distributed-redis/                         # cluster-wide stampede (Redis + Redisson lock)
     ├── pom.xml
+    ├── Dockerfile
     └── src/
         ├── main/java/com/areina/distributedlock/
         │   ├── DistributedLockApplication.java
-        │   ├── controller/TicketController.java
+        │   ├── controller/TicketController.java          # + /stats and /cache/{id}/reset
         │   ├── service/TicketNoLockCacheService.java    # naive Redis value cache (stampedes across pods)
         │   ├── service/TicketLockCacheService.java       # distributed lock (collapses to 1 DB query)
         │   ├── service/TicketLayeredCacheService.java    # local promise cache + distributed lock (also coalesces intra-pod)
-        │   ├── repository/TicketRepository.java
+        │   ├── repository/TicketRepository.java          # + cluster-wide Redis DB-hit counter
         │   ├── model/TicketAvailability.java             # adds handledByPod
-        │   └── config/{RedissonConfig, TicketJsonCodec}.java
+        │   └── config/{RedissonConfig, TicketJsonCodec, CacheProperties}.java
         └── test/
             ├── java/com/areina/distributedlock/
             │   └── DistributedStampedeSimulationTest.java # Testcontainers PostgreSQL + Redis
