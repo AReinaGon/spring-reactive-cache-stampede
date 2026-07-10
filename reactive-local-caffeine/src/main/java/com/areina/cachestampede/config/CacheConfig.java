@@ -4,6 +4,7 @@ import com.areina.cachestampede.model.TicketAvailability;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import java.time.Duration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import reactor.core.publisher.Mono;
@@ -11,8 +12,9 @@ import reactor.core.publisher.Mono;
 /**
  * Two Caffeine caches that embody the difference between a naive and a stampede-safe design.
  *
- * <p>Both share the same 10-second TTL (short, to keep the load test fast; production would use
- * minutes). What differs is <em>what</em> they store:
+ * <p>Both share the same TTL ({@code cache.ttl}, default 10s — short, to keep the load test fast;
+ * production would use minutes). A shorter TTL makes the key expire more often, so under sustained
+ * load the naive value cache re-stampedes on every expiry. What differs is <em>what</em> they store:
  *
  * <ul>
  *   <li>{@code valueCache} stores the resolved {@link TicketAvailability}. It only holds an entry
@@ -29,13 +31,17 @@ import reactor.core.publisher.Mono;
 @Configuration
 public class CacheConfig {
 
-    private static final Duration TTL = Duration.ofSeconds(10);
+    private final Duration ttl;
+
+    public CacheConfig(@Value("${cache.ttl:10s}") Duration ttl) {
+        this.ttl = ttl;
+    }
 
     /** Naive cache: stores the resolved value, populated only after the DB answers. */
     @Bean
     public Cache<String, TicketAvailability> valueCache() {
         return Caffeine.newBuilder()
-                .expireAfterWrite(TTL)
+                .expireAfterWrite(ttl)
                 .maximumSize(10_000)
                 .recordStats()
                 .build();
@@ -45,7 +51,7 @@ public class CacheConfig {
     @Bean
     public Cache<String, Mono<TicketAvailability>> promiseCache() {
         return Caffeine.newBuilder()
-                .expireAfterWrite(TTL)
+                .expireAfterWrite(ttl)
                 .maximumSize(10_000)
                 .recordStats()
                 .build();

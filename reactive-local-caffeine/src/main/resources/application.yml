@@ -2,13 +2,25 @@ spring:
   application:
     name: reactive-local-caffeine
   r2dbc:
-    url: r2dbc:postgresql://localhost:5432/ticketing_db
-    username: user_poc
-    password: pwd_poc
+    url: ${SPRING_R2DBC_URL:r2dbc:postgresql://localhost:5432/ticketing_db}
+    username: ${SPRING_R2DBC_USERNAME:user_poc}
+    password: ${SPRING_R2DBC_PASSWORD:pwd_poc}
     pool:
       enabled: true
       initial-size: 0   # lazy: the app boots without a running PostgreSQL (use docker-compose for real queries)
-      max-size: 10
+      # Small pool + short acquire timeout so a stampede of slow queries drains it and starts
+      # timing out — that is what reproduces "the database falls over" in the collapse load test.
+      max-size: ${SPRING_R2DBC_POOL_MAX_SIZE:10}
+      max-acquire-time: ${SPRING_R2DBC_POOL_MAX_ACQUIRE_TIME:0}   # 0 = wait forever (default); set e.g. 2s for the collapse test
+
+# Cache TTL (short so the key expires often and the naive path re-stampedes under load).
+cache:
+  ttl: ${CACHE_TTL:10s}
+
+# Load-test only: simulate an expensive downstream by holding the DB connection with pg_sleep.
+# 0s = plain fast query (default, production-like).
+loadtest:
+  query-latency: ${LOADTEST_QUERY_LATENCY:0s}
 
 management:
   endpoints:
@@ -21,4 +33,4 @@ management:
 
 logging:
   level:
-    com.areina.cachestampede: DEBUG
+    com.areina.cachestampede: ${LOGGING_LEVEL_COM_AREINA_CACHESTAMPEDE:DEBUG}
