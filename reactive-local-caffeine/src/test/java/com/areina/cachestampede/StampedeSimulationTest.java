@@ -1,11 +1,11 @@
-package com.example.cachestampede;
+package com.areina.cachestampede;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.example.cachestampede.model.TicketAvailability;
-import com.example.cachestampede.repository.TicketRepository;
-import com.example.cachestampede.service.TicketPromiseCacheService;
-import com.example.cachestampede.service.TicketValueCacheService;
+import com.areina.cachestampede.model.TicketAvailability;
+import com.areina.cachestampede.repository.TicketRepository;
+import com.areina.cachestampede.service.TicketPromiseCacheService;
+import com.areina.cachestampede.service.TicketValueCacheService;
 import com.github.benmanes.caffeine.cache.Cache;
 import java.time.Duration;
 import java.util.function.Function;
@@ -17,15 +17,22 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * Empirically reproduces a cache stampede and proves the reactive mitigation.
+ * Empirically reproduces a cache stampede against a real PostgreSQL database and proves the
+ * reactive mitigation.
  *
- * <p>Each test fires 2,000 fully concurrent requests at one service against the same key
+ * <p>A Testcontainers-managed PostgreSQL container is started once for the test class. Each test
+ * fires 2,000 fully concurrent requests at one service against the same key
  * ({@code Flux.range(0, N).flatMap(..., N)} subscribes to all 2,000 inner publishers before any of
- * them completes) and counts how many times the simulated database is actually queried.
+ * them completes) and counts how many times the database is actually queried.
  *
  * <ul>
  *   <li>{@link TicketValueCacheService} stores the resolved value, so the whole burst misses the
@@ -38,12 +45,34 @@ import reactor.core.publisher.Mono;
  * caching strategy itself rather than the connection limits of a load-test client.
  */
 @SpringBootTest
+@Testcontainers
 class StampedeSimulationTest {
 
     private static final Logger log = LoggerFactory.getLogger(StampedeSimulationTest.class);
 
     private static final int CONCURRENT_REQUESTS = 2_000;
     private static final String EVENT_ID = "black-friday-2026";
+
+    @Container
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine")
+            .withDatabaseName("ticketing_db")
+            .withUsername("user_poc")
+            .withPassword("pwd_poc")
+            .withInitScript("db/schema.sql");
+
+    @DynamicPropertySource
+    static void r2dbcProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.r2dbc.url", () ->
+                "r2dbc:postgresql://%s:%d/%s".formatted(
+                        postgres.getHost(),
+                        postgres.getMappedPort(5432),
+                        postgres.getDatabaseName()));
+        registry.add("spring.r2dbc.username", postgres::getUsername);
+        registry.add("spring.r2dbc.password", postgres::getPassword);
+        // Larger pool so 2,000 concurrent queries don't stall behind a 10-connection ceiling
+        registry.add("spring.r2dbc.pool.max-size", () -> "100");
+        registry.add("spring.r2dbc.pool.initial-size", () -> "5");
+    }
 
     @Autowired
     private TicketValueCacheService valueCacheService;
@@ -103,7 +132,7 @@ class StampedeSimulationTest {
         long t0 = System.nanoTime();
         Flux.range(0, CONCURRENT_REQUESTS)
                 .flatMap(i -> call.apply(EVENT_ID), CONCURRENT_REQUESTS)
-                .blockLast(Duration.ofSeconds(60));
+                .blockLast(Duration.ofSeconds(120));
         return (System.nanoTime() - t0) / 1_000_000;
     }
 }

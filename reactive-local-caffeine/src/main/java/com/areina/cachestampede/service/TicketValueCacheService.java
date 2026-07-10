@@ -1,7 +1,7 @@
-package com.example.cachestampede.service;
+package com.areina.cachestampede.service;
 
-import com.example.cachestampede.model.TicketAvailability;
-import com.example.cachestampede.repository.TicketRepository;
+import com.areina.cachestampede.model.TicketAvailability;
+import com.areina.cachestampede.repository.TicketRepository;
 import com.github.benmanes.caffeine.cache.Cache;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;

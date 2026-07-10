@@ -1,4 +1,4 @@
-package com.example.cachestampede;
+package com.areina.cachestampede;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

@@ -1,8 +1,8 @@
-package com.example.cachestampede.controller;
+package com.areina.cachestampede.controller;
 
-import com.example.cachestampede.model.TicketAvailability;
-import com.example.cachestampede.service.TicketPromiseCacheService;
-import com.example.cachestampede.service.TicketValueCacheService;
+import com.areina.cachestampede.model.TicketAvailability;
+import com.areina.cachestampede.service.TicketPromiseCacheService;
+import com.areina.cachestampede.service.TicketValueCacheService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;

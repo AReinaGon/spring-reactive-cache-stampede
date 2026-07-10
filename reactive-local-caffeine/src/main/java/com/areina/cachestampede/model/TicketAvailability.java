@@ -1,4 +1,4 @@
-package com.example.cachestampede.model;
+package com.areina.cachestampede.model;
 
 import java.time.LocalDateTime;
 

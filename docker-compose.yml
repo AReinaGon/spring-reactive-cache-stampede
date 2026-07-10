@@ -1,6 +1,6 @@
 services:
   mock-database:
-    image: postgres:15-alpine
+    image: postgres:17-alpine
     container_name: poc-postgres
     environment:
       POSTGRES_USER: user_poc
@@ -8,10 +8,8 @@ services:
       POSTGRES_DB: ticketing_db
     ports:
       - "5432:5432"
+    volumes:
+      # Same schema used by Testcontainers — single source of truth
+      - ./reactive-local-caffeine/src/test/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
 
-# --- Phase 2 placeholder: distributed cache with Redis + Redisson ---
-#  cache:
-#    image: redis:7-alpine
-#    container_name: poc-redis
-#    ports:
-#      - "6379:6379"
+

@@ -1,6 +1,6 @@
-package com.example.cachestampede.config;
+package com.areina.cachestampede.config;
 
-import com.example.cachestampede.model.TicketAvailability;
+import com.areina.cachestampede.model.TicketAvailability;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import java.time.Duration;
