@@ -1,0 +1,69 @@
+# Single shared PostgreSQL, seeded from the same schema the tests use. Ephemeral storage (emptyDir):
+# this is a load-test fixture, not a database to keep.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: cache-stampede
+data:
+  schema.sql: |
+    CREATE TABLE ticket_availability (
+        event_id        VARCHAR(255) PRIMARY KEY,
+        event_name      VARCHAR(255) NOT NULL,
+        available_seats INT          NOT NULL
+    );
+
+    INSERT INTO ticket_availability (event_id, event_name, available_seats)
+    VALUES ('black-friday-2026', 'Concierto Black Friday Edition', 1500);
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: cache-stampede
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          env:
+            - name: POSTGRES_USER
+              value: user_poc
+            - name: POSTGRES_PASSWORD
+              value: pwd_poc
+            - name: POSTGRES_DB
+              value: ticketing_db
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "user_poc", "-d", "ticketing_db"]
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      volumes:
+        - name: init
+          configMap:
+            name: postgres-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: cache-stampede
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

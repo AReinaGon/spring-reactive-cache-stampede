@@ -1,0 +1,49 @@
+# Internal planning / prompt docs — not published
+docs/
+
+# Maven build output
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# Compiled class files
+*.class
+
+# Logs
+*.log
+
+# JMeter run output (the .jmx plans are kept; generated results/reports are not)
+*.jtl
+jmeter/jmeter/
+jmeter/report-*/
+
+# IDE - IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# IDE - Eclipse
+.classpath
+.project
+.settings/
+bin/
+
+# IDE - VS Code
+.vscode/
+
+# Claude Code local tooling (preview server points at gitignored docs/)
+.claude/
+
+# IDE - NetBeans
+nbproject/private/
+build/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+# OS
+.DS_Store
+Thumbs.db

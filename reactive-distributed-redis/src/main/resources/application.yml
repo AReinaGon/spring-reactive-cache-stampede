@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: reactive-distributed-redis
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/ticketing_db
+    username: user_poc
+    password: pwd_poc
+    pool:
+      enabled: true
+      initial-size: 0   # lazy: the app does not open DB connections until the first query
+      max-size: 10
+
+# Redisson connects eagerly on startup, so Redis must be up (docker-compose up -d) before the app boots
+redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+
+# Cache tuning, externalised so a load test can reopen the stampede window on demand instead of
+# waiting out a 10-minute production TTL. Every value accepts a Spring duration suffix (s, m, h) and
+# can be overridden per environment via the matching CACHE_* variable (see deploy/ manifests):
+#   CACHE_VALUE_TTL=2s  -> the cached value goes cold every 2 seconds, so JMeter keeps stampeding.
+cache:
+  value-ttl: ${CACHE_VALUE_TTL:10m}              # how long a resolved value lives in Redis
+  lock-wait: ${CACHE_LOCK_WAIT:30s}              # how long a losing pod waits for the distributed lock
+  lock-lease: ${CACHE_LOCK_LEASE:10s}            # lease held by the winning pod (auto-released if it dies)
+  local-in-flight-ttl: ${CACHE_LOCAL_IN_FLIGHT_TTL:5s}  # safety-net eviction for the per-pod in-flight Mono
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.areina.distributedlock: DEBUG
+    org.redisson: INFO

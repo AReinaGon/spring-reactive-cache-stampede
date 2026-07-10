@@ -1,0 +1,25 @@
+services:
+  mock-database:
+    image: postgres:17-alpine
+    container_name: poc-postgres
+    environment:
+      POSTGRES_USER: user_poc
+      POSTGRES_PASSWORD: pwd_poc
+      POSTGRES_DB: ticketing_db
+    ports:
+      - "5432:5432"
+    volumes:
+      # Same schema used by Testcontainers — single source of truth
+      - ./reactive-local-caffeine/src/test/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+
+  # Distributed cache + arbiter for the Redisson distributed lock (reactive-distributed-redis)
+  cache-redis:
+    image: redis:7-alpine
+    container_name: poc-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+

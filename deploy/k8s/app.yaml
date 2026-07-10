@@ -1,0 +1,84 @@
+# The pod cluster. Scale it to launch "a ton of pods" against one cold key:
+#
+#   kubectl scale deployment/app -n cache-stampede --replicas=20
+#
+# All connection + cache tuning lives in the ConfigMap below, so you can re-test different TTLs by
+# editing it and rolling the deployment (kubectl rollout restart deployment/app -n cache-stampede)
+# — no rebuild, no waiting out a 10-minute TTL.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: cache-stampede
+data:
+  SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/ticketing_db
+  SPRING_R2DBC_USERNAME: user_poc
+  SPRING_R2DBC_PASSWORD: pwd_poc
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  # Short value TTL so the stampede window reopens during a load test. Tune freely.
+  CACHE_VALUE_TTL: "1m"
+  CACHE_LOCK_WAIT: "30s"
+  CACHE_LOCK_LEASE: "10s"
+  CACHE_LOCAL_IN_FLIGHT_TTL: "5s"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: cache-stampede
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      containers:
+        - name: app
+          image: reactive-distributed-redis:local
+          # Use the image you built and loaded into the cluster (kind load / minikube image load),
+          # never pull from a registry.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            # Real pod name shows up as handledByPod in the JSON, so you can see which pod served each call.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  namespace: cache-stampede
+spec:
+  type: LoadBalancer
+  selector:
+    app: app
+  ports:
+    - port: 8080
+      targetPort: 8080
+  # Type LoadBalancer: Docker Desktop maps this service port (8080) directly to localhost:8080.
+  # No port-forwarding or Ingress is needed!
+

@@ -1,0 +1,7 @@
+# The image copies a prebuilt jar from target/, so the rest of the context is noise.
+src
+docs
+*.md
+.idea
+*.iml
+.git
