@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: reactive-local-caffeine
+  # Reactive PostgreSQL connection (served by docker-compose).
+  # The repository is simulated in Phase 1, so the connection is created lazily and the app
+  # boots even when PostgreSQL is not running. A real R2DBC repository is wired in Phase 2.
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/ticketing_db
+    username: user_poc
+    password: pwd_poc
+    pool:
+      enabled: true
+      initial-size: 0
+      max-size: 10
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.example.cachestampede: DEBUG

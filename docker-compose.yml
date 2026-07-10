@@ -1,0 +1,17 @@
+services:
+  mock-database:
+    image: postgres:15-alpine
+    container_name: poc-postgres
+    environment:
+      POSTGRES_USER: user_poc
+      POSTGRES_PASSWORD: pwd_poc
+      POSTGRES_DB: ticketing_db
+    ports:
+      - "5432:5432"
+
+# --- Phase 2 placeholder: distributed cache with Redis + Redisson ---
+#  cache:
+#    image: redis:7-alpine
+#    container_name: poc-redis
+#    ports:
+#      - "6379:6379"
